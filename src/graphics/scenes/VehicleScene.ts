@@ -1,0 +1,370 @@
+/**
+ * VehicleScene Class
+ * Main 3D scene with camera, lights, ground, vehicle, and skybox
+ */
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Ground } from '../../actors/Ground';
+import { Vehicle } from '../../actors/vehicle/Vehicle';
+import type { IPhysicsWorld } from '../../types';
+
+export class VehicleScene {
+  public name: string;
+  public scene: THREE.Scene;
+  public camera: THREE.PerspectiveCamera;
+  public controls: OrbitControls;
+  public vehicle!: Vehicle;
+  public assets: Map<string, any> | null;
+  public fog!: THREE.Fog;
+  
+  private canvas: HTMLCanvasElement;
+  private physicWorld: IPhysicsWorld;
+  private timer: any;
+  private sceneLight!: THREE.DirectionalLight;
+  private hemiLight!: THREE.HemisphereLight;
+  private field: Map<string, Ground>;
+  private settings: {
+    sceneLightBias: number;
+    controlsMaxDist: number;
+    controlsMaxAngle: number;
+  };
+  private defBackground: THREE.Color;
+
+  constructor(canvas: HTMLCanvasElement, physicWorld: IPhysicsWorld, timer?: any) {
+    this.name = 'vehicle scene';
+    this.canvas = canvas;
+    this.physicWorld = physicWorld;
+    this.timer = timer;
+    this.assets = null;
+    this.field = new Map();
+    
+    this.settings = {
+      sceneLightBias: 0,
+      controlsMaxDist: 25,
+      controlsMaxAngle: Math.PI / 2
+    };
+
+    this.defBackground = new THREE.Color(0x87ceeb);
+    
+    // Create scene
+    this.scene = new THREE.Scene();
+    this.scene.background = this.defBackground;
+
+    // Create camera
+    this.camera = new THREE.PerspectiveCamera(
+      75,
+      this.canvas.clientWidth / this.canvas.clientHeight,
+      0.1,
+      1000
+    );
+
+    // Create controls
+    this.controls = new OrbitControls(this.camera, this.canvas);
+    
+    this.init();
+  }
+
+  /**
+   * Initialize scene
+   */
+  private init(): void {
+    // Camera setup - positioned to look at vehicle from behind and above
+    // Vehicle spawns at (0, 2, 0) - center of ground, above surface
+    this.camera.position.set(-8, 5, 8); // Behind and to the side, elevated
+    
+    // Set camera to look at vehicle spawn position
+    this.camera.lookAt(new THREE.Vector3(0, 2, 0));
+
+    // OrbitControls setup
+    this.controls.target.set(0, 2, 0); // Look at vehicle at origin
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.05;
+    this.controls.screenSpacePanning = false;
+    this.controls.minDistance = 1.7;
+    this.controls.maxDistance = this.settings.controlsMaxDist;
+    this.controls.maxPolarAngle = this.settings.controlsMaxAngle;
+
+    // Fog
+    const near = 0.5;
+    const far = 150;
+    const fogColor = 0x87ceeb; // Sky blue color
+    this.fog = new THREE.Fog(fogColor, near, far);
+    this.scene.fog = this.fog;
+
+    // Lighting
+    this.addSceneLight();
+
+    // Create vehicle
+    this.vehicle = new Vehicle(this.physicWorld, this.timer);
+
+    // Create a simple flat ground instead of heightfield for now
+    // This will be more reliable for physics
+    const groundGeometry = new THREE.PlaneGeometry(100, 100);
+    const groundMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x808080,
+      roughness: 0.8,
+      metalness: 0.2,
+      side: THREE.DoubleSide
+    });
+    const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
+    groundMesh.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+    groundMesh.position.set(0, 0, 0);
+    groundMesh.receiveShadow = true;
+    this.scene.add(groundMesh);
+    
+    // Create physics ground plane
+    const groundShape = new CANNON.Plane();
+    const groundBody = new CANNON.Body({
+      mass: 0, // Static
+      shape: groundShape,
+      material: this.physicWorld.groundMaterial
+    });
+    groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0); // Rotate to be horizontal
+    groundBody.position.set(0, 0, 0);
+    this.physicWorld.world.addBody(groundBody);
+    
+    console.log('Simple flat ground created at Y=0');
+    console.log('Ground body position:', groundBody.position);
+    console.log('Ground body quaternion:', groundBody.quaternion);
+
+    // Add vehicle components to scene
+    this.scene.add(this.vehicle.body);
+    this.scene.add(this.vehicle.wheels.LF);
+    this.scene.add(this.vehicle.wheels.RF);
+    this.scene.add(this.vehicle.wheels.LR);
+    this.scene.add(this.vehicle.wheels.RR);
+
+    console.log('VehicleScene initialized');
+  }
+
+  /**
+   * Add scene lighting
+   */
+  private addSceneLight(): void {
+    // Hemisphere light for ambient lighting
+    this.hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+    this.hemiLight.position.set(0, 20, 0);
+    this.scene.add(this.hemiLight);
+
+    // Directional light for shadows
+    this.sceneLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    this.sceneLight.position.set(10, 20, 10);
+    this.sceneLight.castShadow = true;
+    
+    // Shadow camera setup
+    this.sceneLight.shadow.camera.top = 50;
+    this.sceneLight.shadow.camera.bottom = -50;
+    this.sceneLight.shadow.camera.left = -50;
+    this.sceneLight.shadow.camera.right = 50;
+    this.sceneLight.shadow.camera.near = 0.1;
+    this.sceneLight.shadow.camera.far = 100;
+    this.sceneLight.shadow.mapSize.width = 2048;
+    this.sceneLight.shadow.mapSize.height = 2048;
+
+    this.scene.add(this.sceneLight);
+  }
+
+  /**
+   * Load all assets (called after asset loading complete)
+   */
+  public loadAllAssets(): void {
+    if (!this.assets) return;
+
+    // Load environment map (skybox)
+    const envMap = this.assets.get('v1');
+    if (envMap) {
+      this.scene.background = envMap;
+      this.scene.environment = envMap;
+    }
+
+    // Load vehicle GLTF model
+    const vehicleGltf = this.assets.get('vehicleModel');
+    if (vehicleGltf) {
+      this.loadVehicleModel(vehicleGltf);
+    }
+
+    // Load ground texture
+    const groundTexture = this.assets.get('groundDiffuse');
+    if (groundTexture) {
+      this.field.forEach(ground => {
+        ground.traverse((child: any) => {
+          if (child.isMesh && child.material instanceof THREE.MeshStandardMaterial) {
+            child.material.map = groundTexture;
+            child.material.needsUpdate = true;
+          }
+        });
+      });
+    }
+
+    // Load vehicle texture map
+    const vehicleMap = this.assets.get('vehicleMap');
+    if (vehicleMap && this.vehicle) {
+      this.vehicle.addMap(vehicleMap);
+    }
+
+    // Load headlight flare texture
+    const headlightFlare = this.assets.get('headlightsFlare');
+    if (headlightFlare) {
+      // Apply to headlight flares if needed
+    }
+
+    console.log('All assets loaded to scene');
+  }
+
+  /**
+   * Load vehicle 3D model from GLTF
+   */
+  private loadVehicleModel(gltf: any): void {
+    const model = gltf.scene || gltf;
+    
+    console.log('Loading vehicle model, original scale:', model.scale);
+    console.log('Model children count:', model.children.length);
+    
+    // Find and assign materials from loaded model
+    model.traverse((child: any) => {
+      if (child.isMesh) {
+        const name = child.name.toLowerCase();
+        console.log('Found mesh:', name);
+        
+        // Assign body material
+        if (name.includes('body') || name.includes('chassis')) {
+          this.vehicle.materials.body = child.material;
+        }
+        
+        // Assign wheel/rim materials
+        if (name.includes('wheel') || name.includes('rim')) {
+          if (name.includes('lf') || name.includes('front') && name.includes('left')) {
+            this.vehicle.materials.rim.LF = child.material;
+          } else if (name.includes('rf') || name.includes('front') && name.includes('right')) {
+            this.vehicle.materials.rim.RF = child.material;
+          } else if (name.includes('lr') || name.includes('rear') && name.includes('left')) {
+            this.vehicle.materials.rim.LR = child.material;
+          } else if (name.includes('rr') || name.includes('rear') && name.includes('right')) {
+            this.vehicle.materials.rim.RR = child.material;
+          }
+        }
+
+        // Assign light materials
+        if (name.includes('light') || name.includes('lamp')) {
+          if (name.includes('front')) {
+            if (name.includes('left')) {
+              this.vehicle.materials.lights.LF = child.material;
+            } else if (name.includes('right')) {
+              this.vehicle.materials.lights.RF = child.material;
+            }
+          } else if (name.includes('rear') || name.includes('back')) {
+            if (name.includes('left')) {
+              this.vehicle.materials.lights.LR = child.material;
+            } else if (name.includes('right')) {
+              this.vehicle.materials.lights.RR = child.material;
+            }
+          }
+        }
+
+        // Enable shadows
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    // Scale model - make it much larger (15x larger than original 0.067 scale)
+    model.scale.set(15, 15, 15);
+    
+    // Position model correctly relative to physics body
+    model.position.set(0, 0, 0);
+    
+    // Rotate model to match physics orientation
+    // Try -90° on X axis to flip it the other way
+    model.rotation.set(-Math.PI / 2, 0, 0); // -90° rotation on X axis
+    
+    this.vehicle.body.add(model);
+    console.log('Vehicle model added to body');
+    console.log('  Model scale:', model.scale);
+    console.log('  Model position:', model.position);
+    console.log('  Vehicle body position:', this.vehicle.body.position);
+    
+    // Hide wireframe now
+    const physicMesh = this.vehicle.body.children.find((child: any) => child.name === 'vehicleBody');
+    if (physicMesh) {
+      physicMesh.visible = false;
+      console.log('Physics wireframe mesh hidden');
+    }
+  }
+
+  /**
+   * Add assets during loading (progress callback)
+   */
+  public addAssets(data: { value: number }): void {
+    // Handle loading progress
+    console.log(`Scene loading: ${Math.round(data.value * 100)}%`);
+  }
+
+  /**
+   * Update scene each frame
+   */
+  public update(_fi: number): void {
+    // Update controls (important for mouse interaction)
+    this.controls.update();
+
+    // Update vehicle physics and graphics
+    if (this.vehicle) {
+      this.vehicle.update();
+    }
+
+    // Only update camera target and light if vehicle is stable (not falling)
+    // This allows free camera movement initially
+    if (this.vehicle && this.vehicle.body.position.y > -10) {
+      const vehiclePos = this.vehicle.body.position;
+      
+      // Update scene light to follow vehicle
+      if (this.sceneLight) {
+        this.sceneLight.position.set(
+          vehiclePos.x + 10,
+          vehiclePos.y + 20,
+          vehiclePos.z + 10
+        );
+        this.sceneLight.target.position.copy(vehiclePos);
+        this.sceneLight.target.updateMatrixWorld();
+      }
+      
+      // Optionally follow vehicle with camera (commented out for free camera control)
+      // Uncomment the lines below to make camera follow the vehicle
+      // if (this.controls) {
+      //   this.controls.target.set(vehiclePos.x, vehiclePos.y, vehiclePos.z);
+      // }
+    }
+  }
+
+  /**
+   * Handle window resize
+   */
+  public resizeAction(): void {
+    this.camera.aspect = this.canvas.clientWidth / this.canvas.clientHeight;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Change scene background color
+   */
+  public changeSceneBackground(colorHex: number): void {
+    this.scene.background = new THREE.Color(colorHex);
+    if (this.fog) {
+      this.fog.color.setHex(colorHex);
+    }
+  }
+
+  /**
+   * Change scene light intensity
+   */
+  public changeSceneLightIntensity(intensity: number): void {
+    this.sceneLight.intensity = intensity;
+  }
+
+  /**
+   * Change scene light color
+   */
+  public changeSceneLightColor(colorHex: number): void {
+    this.sceneLight.color.setHex(colorHex);
+  }
+}

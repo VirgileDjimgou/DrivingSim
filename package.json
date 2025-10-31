@@ -1,0 +1,30 @@
+{
+  "name": "drivingsim",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@popperjs/core": "^2.11.8",
+    "bootstrap": "^5.3.3",
+    "cannon-es": "^0.20.0",
+    "dat.gui": "^0.7.9",
+    "three": "^0.170.0",
+    "vue": "^3.5.22"
+  },
+  "devDependencies": {
+    "@types/dat.gui": "^0.7.13",
+    "@types/events": "^3.0.3",
+    "@types/node": "^24.6.0",
+    "@types/three": "^0.170.0",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@vue/tsconfig": "^0.8.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.7",
+    "vue-tsc": "^3.1.0"
+  }
+}
