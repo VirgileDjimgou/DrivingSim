@@ -5,7 +5,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { Ground } from '../../actors/Ground';
 import { Vehicle } from '../../actors/vehicle/Vehicle';
 import type { IPhysicsWorld } from '../../types';
 
@@ -23,7 +22,6 @@ export class VehicleScene {
   private timer: any;
   private sceneLight!: THREE.DirectionalLight;
   private hemiLight!: THREE.HemisphereLight;
-  private field: Map<string, Ground>;
   private settings: {
     sceneLightBias: number;
     controlsMaxDist: number;
@@ -37,7 +35,6 @@ export class VehicleScene {
     this.physicWorld = physicWorld;
     this.timer = timer;
     this.assets = null;
-    this.field = new Map();
     
     this.settings = {
       sceneLightBias: 0,
@@ -185,17 +182,8 @@ export class VehicleScene {
     }
 
     // Load ground texture
-    const groundTexture = this.assets.get('groundDiffuse');
-    if (groundTexture) {
-      this.field.forEach(ground => {
-        ground.traverse((child: any) => {
-          if (child.isMesh && child.material instanceof THREE.MeshStandardMaterial) {
-            child.material.map = groundTexture;
-            child.material.needsUpdate = true;
-          }
-        });
-      });
-    }
+    // NOTE: In this scene we use a simple plane mesh created in init().
+    // If you later switch to Ground actor(s), adapt this to apply maps to them.
 
     // Load vehicle texture map
     const vehicleMap = this.assets.get('vehicleMap');
@@ -206,7 +194,8 @@ export class VehicleScene {
     // Load headlight flare texture
     const headlightFlare = this.assets.get('headlightsFlare');
     if (headlightFlare) {
-      // Apply to headlight flares if needed
+      // Provide the flare texture to the body so created SpotLights get flares
+      this.vehicle.body.addHeadlightsFlare(headlightFlare);
     }
 
     console.log('All assets loaded to scene');
@@ -217,77 +206,165 @@ export class VehicleScene {
    */
   private loadVehicleModel(gltf: any): void {
     const model = gltf.scene || gltf;
-    
-    console.log('Loading vehicle model, original scale:', model.scale);
-    console.log('Model children count:', model.children.length);
-    
-    // Find and assign materials from loaded model
-    model.traverse((child: any) => {
-      if (child.isMesh) {
-        const name = child.name.toLowerCase();
-        console.log('Found mesh:', name);
-        
-        // Assign body material
-        if (name.includes('body') || name.includes('chassis')) {
-          this.vehicle.materials.body = child.material;
-        }
-        
-        // Assign wheel/rim materials
-        if (name.includes('wheel') || name.includes('rim')) {
-          if (name.includes('lf') || name.includes('front') && name.includes('left')) {
-            this.vehicle.materials.rim.LF = child.material;
-          } else if (name.includes('rf') || name.includes('front') && name.includes('right')) {
-            this.vehicle.materials.rim.RF = child.material;
-          } else if (name.includes('lr') || name.includes('rear') && name.includes('left')) {
-            this.vehicle.materials.rim.LR = child.material;
-          } else if (name.includes('rr') || name.includes('rear') && name.includes('right')) {
-            this.vehicle.materials.rim.RR = child.material;
-          }
-        }
 
-        // Assign light materials
-        if (name.includes('light') || name.includes('lamp')) {
-          if (name.includes('front')) {
-            if (name.includes('left')) {
-              this.vehicle.materials.lights.LF = child.material;
-            } else if (name.includes('right')) {
-              this.vehicle.materials.lights.RF = child.material;
-            }
-          } else if (name.includes('rear') || name.includes('back')) {
-            if (name.includes('left')) {
-              this.vehicle.materials.lights.LR = child.material;
-            } else if (name.includes('right')) {
-              this.vehicle.materials.lights.RR = child.material;
-            }
-          }
-        }
+    const foundMeshByName = (name: string, source: THREE.Object3D[]): THREE.Object3D | undefined => {
+      return source.find((obj) => obj.name === name);
+    };
 
-        // Enable shadows
-        child.castShadow = true;
-        child.receiveShadow = true;
+    const foundMaterialInGroupByName = (name: string, grp?: THREE.Object3D | null): THREE.Material | null => {
+      if (!grp) return null;
+      for (let i = 0; i < grp.children.length; i++) {
+        const child: any = grp.children[i];
+        if (child.isMesh && child.material && child.material.name === name) {
+          return child.material as THREE.Material;
+        }
+      }
+      return null;
+    };
+
+    console.log('Loading vehicle model... children:', model.children.map((c: any) => c.name));
+
+    // Body and paint material
+    const body = foundMeshByName('body', model.children);
+    if (body) {
+      const bodyMat = foundMaterialInGroupByName('testCarPaint', body);
+      if (bodyMat && (bodyMat as any).isMaterial) {
+        this.vehicle.materials.body = bodyMat as THREE.MeshStandardMaterial;
+        // Align look closer to original defaults
+        this.vehicle.materials.body.emissiveIntensity = 0;
+        (this.vehicle.materials.body as any).envMapIntensity = 1.8;
+        this.vehicle.materials.body.metalness = 0.9;
+        this.vehicle.materials.body.roughness = 0.02;
+        this.vehicle.materials.body.color.setHex(0x37af05);
+      }
+    }
+
+    // Suspension/supports
+    const suppRF = foundMeshByName('frSup', model.children) as THREE.Mesh;
+    const suppLF = foundMeshByName('lfSup', model.children) as THREE.Mesh;
+    const suppRR = foundMeshByName('rrSup', model.children) as THREE.Mesh;
+    const suppLR = foundMeshByName('rlSup', model.children) as THREE.Mesh;
+
+    const suppMatRF = foundMaterialInGroupByName('Material.001', suppRF) as THREE.MeshStandardMaterial | null;
+    const suppMatLF = foundMaterialInGroupByName('Material.001', suppLF) as THREE.MeshStandardMaterial | null;
+    const suppMatRR = foundMaterialInGroupByName('Material.001', suppRR) as THREE.MeshStandardMaterial | null;
+    const suppMatLR = foundMaterialInGroupByName('Material.001', suppLR) as THREE.MeshStandardMaterial | null;
+
+    if (suppMatRF && suppMatLF && suppMatRR && suppMatLR) {
+      this.vehicle.materials.supports.RF = suppMatRF;
+      this.vehicle.materials.supports.LF = suppMatLF;
+      this.vehicle.materials.supports.RR = suppMatRR;
+      this.vehicle.materials.supports.LR = suppMatLR;
+      (suppMatRF as any).envMapIntensity = 1.4;
+      (suppMatLF as any).envMapIntensity = 1.4;
+      (suppMatRR as any).envMapIntensity = 1.4;
+      (suppMatLR as any).envMapIntensity = 1.4;
+    }
+
+    // Lights groups and materials
+    const lightLF = foundMeshByName('f_l_light', model.children);
+    const lightRF = foundMeshByName('f_r_light', model.children);
+    const lightRR = foundMeshByName('r_r_light', model.children);
+    const lightLR = foundMeshByName('r_l_light', model.children);
+
+    const matLightRF = foundMaterialInGroupByName('righTurnLight', lightRF) as THREE.MeshStandardMaterial | null;
+    const matLightLF = foundMaterialInGroupByName('leftTurnLight', lightLF) as THREE.MeshStandardMaterial | null;
+    if (matLightLF && matLightRF) {
+      matLightLF.emissive.setHex(0x000000);
+      matLightRF.emissive.setHex(0x000000);
+      this.vehicle.materials.lights.LF = matLightLF;
+      this.vehicle.materials.lights.RF = matLightRF;
+    }
+
+    const matLightRR = foundMaterialInGroupByName('REAR TAIL LIGHT.002', lightRR) as THREE.MeshStandardMaterial | null;
+    const matLightLR = foundMaterialInGroupByName('REAR TAIL LIGHT.002', lightLR) as THREE.MeshStandardMaterial | null;
+    const turnLeftRear = foundMaterialInGroupByName('leftReverseLight', lightLR) as THREE.MeshStandardMaterial | null;
+    const turnRightRear = foundMaterialInGroupByName('rightReverseLight', lightRR) as THREE.MeshStandardMaterial | null;
+    if (turnLeftRear && turnRightRear) {
+      this.vehicle.materials.lights.rearTurns.L = turnLeftRear;
+      this.vehicle.materials.lights.rearTurns.R = turnRightRear;
+    }
+    if (matLightLR && matLightRR) {
+      matLightLR.emissive.r = 0.35;
+      matLightRR.emissive.r = 0.35;
+      this.vehicle.materials.lights.LR = matLightLR;
+      this.vehicle.materials.lights.RR = matLightRR;
+    }
+
+    // Mount body parts and supports on the chassis group
+    const partsToAdd: THREE.Object3D[] = [];
+    if (body) partsToAdd.push(body);
+    if (lightLF) partsToAdd.push(lightLF);
+    if (lightLR) partsToAdd.push(lightLR);
+    if (lightRR) partsToAdd.push(lightRR);
+    if (lightRF) partsToAdd.push(lightRF);
+    if (suppRF) partsToAdd.push(suppRF);
+    if (suppLF) partsToAdd.push(suppLF);
+    if (suppRR) partsToAdd.push(suppRR);
+    if (suppLR) partsToAdd.push(suppLR);
+    if (partsToAdd.length) {
+      (this.vehicle.body as any).add(...partsToAdd);
+    }
+
+    // Create headlights and set positions relative to light meshes
+    this.vehicle.body.createHeadlights();
+    this.vehicle.body.setLightsPositions();
+
+    // Attach wheels visuals to the corresponding wheel objects
+    const wRR = foundMeshByName('r_r_wheel', model.children);
+    const wRF = foundMeshByName('f_r_wheel', model.children);
+    const wLR = foundMeshByName('r_l_wheel', model.children);
+    const wLF = foundMeshByName('f_l_wheel', model.children);
+  if (wRR) (this.vehicle.wheels.RR as any).add(wRR);
+  if (wRF) (this.vehicle.wheels.RF as any).add(wRF);
+  if (wLR) (this.vehicle.wheels.LR as any).add(wLR);
+  if (wLF) (this.vehicle.wheels.LF as any).add(wLF);
+
+    // Extract materials from wheel groups
+  const wheel_RR = wRR ? foundMeshByName('r_r_wheel', (this.vehicle.wheels.RR as any).children) : undefined;
+  const wheel_RF = wRF ? foundMeshByName('f_r_wheel', (this.vehicle.wheels.RF as any).children) : undefined;
+  const wheel_LR = wLR ? foundMeshByName('r_l_wheel', (this.vehicle.wheels.LR as any).children) : undefined;
+  const wheel_LF = wLF ? foundMeshByName('f_l_wheel', (this.vehicle.wheels.LF as any).children) : undefined;
+
+    const carbonDiskLF = foundMaterialInGroupByName('carbon disk brake', wheel_LF) as THREE.MeshStandardMaterial | null;
+    const carbonDiskRF = foundMaterialInGroupByName('carbon disk brake', wheel_RF) as THREE.MeshStandardMaterial | null;
+    const carbonDiskLR = foundMaterialInGroupByName('carbon disk brake', wheel_LR) as THREE.MeshStandardMaterial | null;
+    const carbonDiskRR = foundMaterialInGroupByName('carbon disk brake', wheel_RR) as THREE.MeshStandardMaterial | null;
+    if (carbonDiskLF) (carbonDiskLF as any).envMapIntensity = 0.5;
+    if (carbonDiskRF) (carbonDiskRF as any).envMapIntensity = 0.5;
+    if (carbonDiskLR) (carbonDiskLR as any).envMapIntensity = 0.5;
+    if (carbonDiskRR) (carbonDiskRR as any).envMapIntensity = 0.5;
+
+    this.vehicle.materials.rim.LF = foundMaterialInGroupByName('frontDisk', wheel_LF) as THREE.MeshStandardMaterial | null;
+    this.vehicle.materials.rim.RF = foundMaterialInGroupByName('frontDisk', wheel_RF) as THREE.MeshStandardMaterial | null;
+    this.vehicle.materials.rim.LR = foundMaterialInGroupByName('frontDisk', wheel_LR) as THREE.MeshStandardMaterial | null;
+    this.vehicle.materials.rim.RR = foundMaterialInGroupByName('frontDisk', wheel_RR) as THREE.MeshStandardMaterial | null;
+
+    const rims = [this.vehicle.materials.rim.LF, this.vehicle.materials.rim.RF, this.vehicle.materials.rim.LR, this.vehicle.materials.rim.RR];
+    rims.forEach((r) => {
+      if (r) {
+        (r as any).emissiveIntensity = 0;
+        r.metalness = 0.8;
+        r.roughness = 0.45;
+        (r as any).envMapIntensity = 1.1;
       }
     });
 
-    // Scale model to appropriate size
-    // The model needs to be scaled up significantly to be visible
-    model.scale.set(5, 5, 5);
-    
-    // Position model correctly relative to physics body
-    // Lift the model higher to prevent it from sinking into the ground
-    model.position.set(0, 1.1, 0);
-    
-    // Rotate model to be upright on its wheels
-    // Flip the vehicle to be right-side up
-    model.rotation.set(-Math.PI/2, 0, 0); // -90° rotation around X axis
-    
-    this.vehicle.body.add(model);
-    console.log('Vehicle model added to body');
-    console.log('  Model scale:', model.scale);
-    console.log('  Model position:', model.position);
-    console.log('  Vehicle body position:', this.vehicle.body.position);
-    
-    // Hide wireframe now
-    const physicMesh = this.vehicle.body.children.find((child: any) => child.name === 'vehicleBody');
+    const tireLF = foundMaterialInGroupByName('tire', wheel_LF) as THREE.MeshStandardMaterial | null;
+    const tireRF = foundMaterialInGroupByName('tire', wheel_RF) as THREE.MeshStandardMaterial | null;
+    const tireLR = foundMaterialInGroupByName('tire', wheel_LR) as THREE.MeshStandardMaterial | null;
+    const tireRR = foundMaterialInGroupByName('tire', wheel_RR) as THREE.MeshStandardMaterial | null;
+    const tireColor = 0x181818;
+    [tireLF, tireRF, tireLR, tireRR].forEach((t) => {
+      if (t) {
+        t.color.setHex(tireColor);
+        t.metalness = 1;
+        t.roughness = 0.65;
+      }
+    });
+
+    // Hide physics wireframe, now that visuals are attached
+  const physicMesh = (this.vehicle.body as any).children.find((child: any) => child.name === 'vehicleBody');
     if (physicMesh) {
       physicMesh.visible = false;
       console.log('Physics wireframe mesh hidden');
@@ -316,8 +393,8 @@ export class VehicleScene {
 
     // Only update camera target and light if vehicle is stable (not falling)
     // This allows free camera movement initially
-    if (this.vehicle && this.vehicle.body.position.y > -10) {
-      const vehiclePos = this.vehicle.body.position;
+    if (this.vehicle && (this.vehicle.body as any).position.y > -10) {
+      const vehiclePos = (this.vehicle.body as any).position as THREE.Vector3;
       
       // Update scene light to follow vehicle
       if (this.sceneLight) {
