@@ -4,7 +4,7 @@
  */
 import { defineComponent, onMounted, onUnmounted, ref } from 'vue';
 import { App } from '../App';
-import assets from '../../public/assets/assets';
+import assets from '../assets/assets';
 
 export default defineComponent({
   name: 'VehicleSimulator',

@@ -70,14 +70,14 @@ export class VehicleScene {
    */
   private init(): void {
     // Camera setup - positioned to look at vehicle from behind and above
-    // Vehicle spawns at (0, 2, 0) - center of ground, above surface
-    this.camera.position.set(-8, 5, 8); // Behind and to the side, elevated
+    // Vehicle spawns at (0, 5, 0) - center of ground, well above surface
+    this.camera.position.set(-8, 8, 8); // Behind and to the side, elevated more
     
     // Set camera to look at vehicle spawn position
-    this.camera.lookAt(new THREE.Vector3(0, 2, 0));
+    this.camera.lookAt(new THREE.Vector3(0, 5, 0));
 
     // OrbitControls setup
-    this.controls.target.set(0, 2, 0); // Look at vehicle at origin
+    this.controls.target.set(0, 5, 0); // Look at vehicle at new higher position
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
     this.controls.screenSpacePanning = false;
@@ -268,15 +268,17 @@ export class VehicleScene {
       }
     });
 
-    // Scale model - make it much larger (15x larger than original 0.067 scale)
-    model.scale.set(15, 15, 15);
+    // Scale model to appropriate size
+    // The model needs to be scaled up significantly to be visible
+    model.scale.set(5, 5, 5);
     
     // Position model correctly relative to physics body
-    model.position.set(0, 0, 0);
+    // Lift the model higher to prevent it from sinking into the ground
+    model.position.set(0, 1.1, 0);
     
-    // Rotate model to match physics orientation
-    // Try -90° on X axis to flip it the other way
-    model.rotation.set(-Math.PI / 2, 0, 0); // -90° rotation on X axis
+    // Rotate model to be upright on its wheels
+    // Flip the vehicle to be right-side up
+    model.rotation.set(-Math.PI/2, 0, 0); // -90° rotation around X axis
     
     this.vehicle.body.add(model);
     console.log('Vehicle model added to body');

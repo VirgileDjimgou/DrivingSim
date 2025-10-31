@@ -49,8 +49,9 @@ export class Vehicle {
   constructor(physicWorld: IPhysicsWorld, timer?: any) {
     this.physicWorld = physicWorld;
     this.timer = timer;
-    // Position vehicle at origin, 2 units above ground (ground is at Y=-2)
-    this.initPosition = new CANNON.Vec3(0, 2, 0);
+    // Position vehicle higher above ground to prevent sinking
+    // Ground is at Y=0, so starting at Y=5 should be safe
+    this.initPosition = new CANNON.Vec3(0, 5, 0);
     this.bodyMass = 2000;
     this.wheelMass = 20;
 
